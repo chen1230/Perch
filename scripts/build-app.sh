@@ -1,0 +1,133 @@
+#!/bin/bash
+# Builds Perch.app into ./build without needing Xcode.
+# Usage: scripts/build-app.sh [debug|release]
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+CONFIG="${1:-release}"
+APP="build/Perch.app"
+VERSION="1.1.0"
+
+# Builds one architecture and prints the binary's path.
+# The Command Line Tools for macOS 27 ship an SDK whose SwiftUI needs a macro
+# plugin they do not include. If the default SDK fails, fall back to the
+# newest macOS 26 SDK installed alongside it.
+build_arch() {
+  local triple="$1-apple-macosx14.0"
+  if [ -z "${SDKROOT:-}" ] && ! swift build -c "$CONFIG" --triple "$triple" >&2; then
+    FALLBACK="$(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX26*.sdk 2>/dev/null | sort -V | tail -1)"
+    if [ -z "$FALLBACK" ]; then exit 1; fi
+    echo "Retrying with $FALLBACK" >&2
+    export SDKROOT="$FALLBACK"
+  fi
+  if [ -n "${SDKROOT:-}" ]; then swift build -c "$CONFIG" --triple "$triple" >&2; fi
+  cp "$(swift build -c "$CONFIG" --triple "$triple" --show-bin-path)/Perch" "$OUT/Perch-$1"
+}
+
+# A universal binary, so it runs on Apple silicon and on Intel Macs, from
+# macOS 14 Sonoma onwards.
+OUT="$(mktemp -d)"
+build_arch arm64
+build_arch x86_64
+lipo -create "$OUT/Perch-arm64" "$OUT/Perch-x86_64" -output "$OUT/Perch"
+BIN="$OUT/Perch"
+
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$BIN" "$APP/Contents/MacOS/Perch"
+
+# Icon
+WORK="$(mktemp -d)"
+swift scripts/make-icon.swift "$WORK/icon.png"
+ICONSET="$WORK/Perch.iconset"
+mkdir -p "$ICONSET"
+for s in 16 32 128 256 512; do
+  sips -z $s $s "$WORK/icon.png" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s*2)) $((s*2)) "$WORK/icon.png" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Perch.icns"
+
+# macOS 26 reads the icon from an asset catalog, not from the icns alone.
+# Without Assets.car and CFBundleIconName, Finder shows a blank icon.
+APPICON="$WORK/Assets.xcassets/AppIcon.appiconset"
+mkdir -p "$APPICON"
+cp "$ICONSET"/*.png "$APPICON/"
+cat > "$APPICON/Contents.json" <<'JSON'
+{
+  "images" : [
+    { "filename" : "icon_16x16.png", "idiom" : "mac", "scale" : "1x", "size" : "16x16" },
+    { "filename" : "icon_16x16@2x.png", "idiom" : "mac", "scale" : "2x", "size" : "16x16" },
+    { "filename" : "icon_32x32.png", "idiom" : "mac", "scale" : "1x", "size" : "32x32" },
+    { "filename" : "icon_32x32@2x.png", "idiom" : "mac", "scale" : "2x", "size" : "32x32" },
+    { "filename" : "icon_128x128.png", "idiom" : "mac", "scale" : "1x", "size" : "128x128" },
+    { "filename" : "icon_128x128@2x.png", "idiom" : "mac", "scale" : "2x", "size" : "128x128" },
+    { "filename" : "icon_256x256.png", "idiom" : "mac", "scale" : "1x", "size" : "256x256" },
+    { "filename" : "icon_256x256@2x.png", "idiom" : "mac", "scale" : "2x", "size" : "256x256" },
+    { "filename" : "icon_512x512.png", "idiom" : "mac", "scale" : "1x", "size" : "512x512" },
+    { "filename" : "icon_512x512@2x.png", "idiom" : "mac", "scale" : "2x", "size" : "512x512" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 }
+}
+JSON
+printf '%s\n' '{ "info" : { "author" : "xcode", "version" : 1 } }' > "$WORK/Assets.xcassets/Contents.json"
+xcrun actool "$WORK/Assets.xcassets" --compile "$APP/Contents/Resources" \
+  --output-format human-readable-text --notices --warnings --errors \
+  --output-partial-info-plist "$WORK/partial.plist" \
+  --app-icon AppIcon --include-all-app-icons \
+  --enable-on-demand-resources NO \
+  --development-region en \
+  --target-device mac \
+  --minimum-deployment-target 14.0 \
+  --platform macosx
+rm -f "$APP/Contents/Resources/AppIcon.icns"
+rm -rf "$WORK"
+
+# Translations: one folder per language, listed in Info.plist so macOS knows
+# which languages the app speaks.
+LANGUAGES=""
+for dir in Sources/Perch/Resources/*.lproj; do
+  cp -R "$dir" "$APP/Contents/Resources/"
+  LANGUAGES="$LANGUAGES<string>$(basename "$dir" .lproj)</string>"
+done
+
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Perch</string>
+  <key>CFBundleDisplayName</key><string>Perch</string>
+  <key>CFBundleIdentifier</key><string>app.perch.Perch</string>
+  <key>CFBundleExecutable</key><string>Perch</string>
+  <key>CFBundleIconFile</key><string>Perch</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+  <key>CFBundleVersion</key><string>2</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array>${LANGUAGES}</array>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Perch watches the folder where macOS saves your screenshots so it can hang them on the line.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Perch watches the folder you chose so it can hang new images on the line.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Perch watches the folder you chose so it can hang new images on the line.</string>
+</dict>
+</plist>
+PLIST
+
+# Sign with a Developer ID when one is in the keychain (or SIGN_IDENTITY is
+# set), with the hardened runtime and a secure timestamp that notarization
+# requires. Without one, sign ad hoc so the app still runs locally.
+IDENTITY="${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/{print $2; exit}')}"
+if [ -n "$IDENTITY" ]; then
+  codesign --force --options runtime --timestamp --sign "$IDENTITY" "$APP"
+  echo "Signed with $IDENTITY"
+else
+  codesign --force --deep --sign - "$APP" >/dev/null
+  echo "Signed ad hoc (no Developer ID found)"
+fi
+echo "Built $APP"

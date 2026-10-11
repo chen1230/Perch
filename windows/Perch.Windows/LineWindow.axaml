@@ -1,0 +1,20 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:Perch"
+        x:Class="Perch.LineWindow"
+        Title="Perch"
+        SystemDecorations="None"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        CanResize="False"
+        ShowActivated="False"
+        WindowStartupLocation="Manual">
+  <Panel>
+    <local:RopeView x:Name="Rope" />
+    <Border x:Name="Hint" HorizontalAlignment="Center" VerticalAlignment="Center"
+            Background="#99000000" CornerRadius="12" Padding="14,8" IsHitTestVisible="False">
+      <TextBlock x:Name="HintText" Foreground="#F7F1E8" FontSize="14" />
+    </Border>
+  </Panel>
+</Window>
