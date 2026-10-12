@@ -77,27 +77,17 @@ left alone.
 
 <br>
 
-## Copied text.
+## Clipboard history.
 
-Text you copy is kept. Screenshots stay on the line and do not join this list. There is no history panel sitting open. Press <kbd>⌃</kbd>&thinsp;<kbd>⌥</kbd>&thinsp;<kbd>V</kbd>, or choose Copied text in the menu bar, and the search window appears. Leave the box empty and it lists what you copied recently. Type, and each matched word is marked in that row's own color.
+Press <kbd>⌃</kbd>&thinsp;<kbd>⌥</kbd>&thinsp;<kbd>V</kbd> on Mac, or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> on Windows, to open the two-column clipboard history. Click a row to preview the complete text or image and its details; press Enter or double-click the row to paste into the previous app. Click an image preview to enlarge it. Search matches text only; clearing the search brings images back.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png">
-  <img src="docs/images/clipboard-light.png" alt="The copied-text search window. The word Config is marked in that row's own color, and an × sits at the end of the row.">
-</picture>
+By default, keep **1,000 text records and 100 images**, independently. Change either capacity in the menu under **History capacity**. Images use **LRU eviction**: copying, selecting or pasting an image refreshes its usage; the least recently used image is removed when the image limit is exceeded. Text keeps the latest copies. Limits and image usage survive restart.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-demo-dark.gif">
-  <img src="docs/images/clipboard-demo-light.gif" alt="The search window springs in with recent copies. A word is typed, the other rows leave, the match lights up in that row's color, and the pointer rests on the row.">
-</picture>
+Delete the selected record with ×, Command-Delete on Mac or Ctrl-Backspace on Windows; undo within five seconds with Command-Z / Ctrl-Z or the Undo button. Moving the pointer away keeps the panel open; Esc or an outside click closes it.
 
-Moving the pointer away does not close it. Click outside the glass, press Esc, press the shortcut again, or pick a row, and it closes. Picking a row copies that text back and tries to paste it into the app that was in front.
+Image history is stored separately from the clothesline, so taking a picture down does not delete its history copy. The hang-images toggle controls the line, not history collection. Files and private or transient clipboard data are excluded. Each image is limited to 64 MB and 80 million pixels; images are retained at full resolution for pasting. All data stays on this computer, and existing text records are migrated without modifying their original file.
 
-The look is chosen under Theme in the menu bar. Day is the default. The others are Night, Lacquer, Spectrum, and Reflection.
-
-Rest the pointer on a row and an × appears at the end. Click it and that one row goes, with no confirmation and no paste. <kbd>⌘</kbd>&thinsp;<kbd>⌫</kbd> deletes the selected row once. Holding it does not continue down the list. <kbd>⌫</kbd> on its own only edits the search box.
-
-About the last 100 copies are kept on this Mac, in Perch's own folder. Files, and anything a password manager marks as private, are not recorded.
+Theme is chosen from the menu. Automatic paste needs macOS Accessibility permission; without it, the selected content is copied and the panel explains how to paste manually after closing.
 
 <br>
 
@@ -141,7 +131,7 @@ so macOS asks again for access to the Desktop after each rebuild.
 
 ## Windows
 
-The Windows app is a tray program for Windows 11. Screenshots hang on a line at the top of the screen, copied text can be searched, and there are five themes. The file to send is `windows/dist/Perch-1.1.0-setup.exe`, about 79 MB. That one file is the installer.
+The Windows app is a tray program for Windows 11. Screenshots hang on a line at the top of the screen, clipboard text and images share a two-column history with configurable limits, and there are five themes. The file to send is `windows/dist/Perch-1.2.0-setup.exe`, about 79 MB. That one file is the installer.
 
 Double-click it. Perch installs for the current user and does not ask for an administrator password. The Start menu gets one Perch shortcut. Uninstall from Settings → Apps. Copied text and screenshots stay in `%AppData%\Perch`.
 
@@ -154,8 +144,9 @@ Double-click it. Perch installs for the current user and does not ask for an adm
 | Click a picture | Copies it back to the clipboard. |
 | Drag along the line | The clip stays where you leave it. Drag it off the line and let go, and it returns to where it was. |
 | The × on a picture | Takes it off the line. A copy Perch saved is deleted. A screenshot in your Pictures folder is not. |
-| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>, or Copied text | Opens search. An empty search lists recent text. Matched words are marked in that row's own color. |
-| Click outside, Esc, the shortcut again, or pick a row | Closes search. Picking a row also copies the text and tries to paste it into the app that was in front. |
+| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>, or Clipboard history | Opens history. An empty search lists recent text and images; a query searches text only. |
+| Click a row; Enter or double-click | Selects and previews a record; confirmation copies and pastes text or the original image. |
+| Click outside, Esc, or the shortcut again | Closes history. |
 | Moving the pointer away | Does not close search. |
 | × on a row, or <kbd>Ctrl</kbd>+<kbd>Backspace</kbd> | Deletes that one row, with no confirmation. Holding the keys does not move on to the next row. Backspace only edits the search box. |
 | Themes | Night, Day, Lacquer, Spectrum, Reflection. Day is the default. |
@@ -174,7 +165,7 @@ windows/installer/build-setup.sh
 | `windows/Perch.Core` | Copied text, where each picture sits, theme colors |
 | `windows/Perch.Windows` | The tray app |
 | `windows/Perch.Setup` | The installer |
-| `windows/dist/Perch-1.1.0-setup.exe` | The file to send |
+| `windows/dist/Perch-1.2.0-setup.exe` | The file to send |
 
 <details>
 <summary>Inside the app</summary>
@@ -194,7 +185,7 @@ windows/installer/build-setup.sh
 | `Trim.swift` | Trims a screen recording and saves the result |
 | `FullScreen.swift` | Knows when to stay hidden |
 | `Line.swift` | What is hanging, and what you can do with it |
-| `ClipboardHistory.swift` | Saved copied text |
+| `ClipboardHistory.swift` | Saved clipboard text and image copies |
 | `ClipboardSearch.swift` | Search window, themes on each row, deleting one row |
 | `ClipboardTheme.swift` | The five looks, Daylight by default |
 | `AppFiles.swift` | Where Perch keeps its files |

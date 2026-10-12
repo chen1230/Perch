@@ -635,10 +635,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(toggleItem)
 
-        let copied = ClosureMenuItem(L("Copied text")) { ClipboardSearch.shared.toggle() }
+        let copied = ClosureMenuItem(L("Clipboard history")) { ClipboardSearch.shared.toggle() }
         copied.keyEquivalent = TextClipboard.shortcut.key
         copied.keyEquivalentModifierMask = TextClipboard.shortcut.modifiers
         menu.addItem(copied)
+
+        let capacity = NSMenuItem(title: L("History capacity"), action: nil, keyEquivalent: "")
+        let capacities = NSMenu()
+        for (isImage, title, values) in [(true, L("Images"), [50, 100, 200, 500]),
+                                         (false, L("Text records"), [100, 500, 1000, 5000])] {
+            let category = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            let choices = NSMenu()
+            for value in values {
+                let option = ClosureMenuItem(String(value)) {
+                    if isImage { ClipboardHistory.shared.setLimits(images: value) }
+                    else { ClipboardHistory.shared.setLimits(text: value) }
+                }
+                let current = isImage ? ClipboardHistory.shared.imageLimit : ClipboardHistory.shared.textLimit
+                option.state = current == value ? .on : .off
+                choices.addItem(option)
+            }
+            category.submenu = choices
+            capacities.addItem(category)
+        }
+        capacity.submenu = capacities
+        menu.addItem(capacity)
 
         let themeItem = NSMenuItem(title: L("Theme"), action: nil, keyEquivalent: "")
         let themes = NSMenu()

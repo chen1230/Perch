@@ -7,7 +7,7 @@ namespace Perch.Setup;
 
 static class Program
 {
-    const string Version = "1.1.0";
+    const string Version = "1.2.0";
 
     [STAThread]
     static int Main(string[] args)

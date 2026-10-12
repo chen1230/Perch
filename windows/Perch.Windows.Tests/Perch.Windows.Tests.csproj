@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Perch.Core\Perch.Core.csproj" />
+    <ProjectReference Include="..\Perch.Windows\Perch.Windows.csproj" />
   </ItemGroup>
 </Project>

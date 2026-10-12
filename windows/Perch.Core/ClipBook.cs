@@ -1,65 +1,97 @@
 namespace Perch;
 
-public sealed record Clip(Guid Id, string Text, DateTimeOffset At);
+public sealed record Clip(Guid Id, string Text, DateTimeOffset At,
+    string? Source = null, string? ImagePath = null, string? ImageKey = null,
+    int Width = 0, int Height = 0, long Bytes = 0, DateTimeOffset? LastUsed = null)
+{
+    public bool IsImage => ImagePath != null;
+}
 
 public sealed class ClipBook
 {
-    public const int Limit = 100;
+    public const int Limit = 1000;
     public const int MaxCharacters = 50_000;
-
     readonly List<Clip> _items = new();
-
     public IReadOnlyList<Clip> Items => _items;
+    public int TextLimit { get; private set; } = Limit;
+    public int ImageLimit { get; private set; } = 100;
+
+    public void SetLimits(int text, int images)
+    {
+        TextLimit = Math.Clamp(text, 1, 10_000);
+        ImageLimit = Math.Clamp(images, 1, 1000);
+        Trim();
+    }
 
     public void ReplaceAll(IEnumerable<Clip> clips)
     {
         _items.Clear();
-        foreach (var clip in clips)
-        {
-            if (string.IsNullOrWhiteSpace(clip.Text) || _items.Count >= Limit)
-                continue;
-            var text = clip.Text.Length > MaxCharacters ? clip.Text[..MaxCharacters] : clip.Text;
-            _items.Add(clip with { Text = text });
-        }
+        _items.AddRange(clips.Where(c => c.IsImage || !string.IsNullOrWhiteSpace(c.Text))
+            .Select(c => c with { Text = c.Text.Length > MaxCharacters ? c.Text[..MaxCharacters] : c.Text })
+            .DistinctBy(c => c.Id));
+        Trim();
     }
 
-    public Clip? Remember(string? text, DateTimeOffset at)
+    public Clip? Remember(string? text, DateTimeOffset at, string? source = null)
     {
-        if (string.IsNullOrWhiteSpace(text))
-            return null;
+        if (string.IsNullOrWhiteSpace(text)) return null;
         text = text.Replace("\0", "");
-        if (text.Length > MaxCharacters)
-            text = text[..MaxCharacters];
-        var existing = _items.FindIndex(c => c.Text == text);
-        if (existing >= 0)
-        {
-            var moved = _items[existing] with { At = at };
-            _items.RemoveAt(existing);
-            _items.Insert(0, moved);
-            return moved;
-        }
-
-        var clip = new Clip(Guid.NewGuid(), text, at);
+        if (text.Length > MaxCharacters) text = text[..MaxCharacters];
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var clip = _items.FirstOrDefault(c => !c.IsImage && c.Text == text)
+            ?? new Clip(Guid.NewGuid(), text, at);
+        clip = clip with { At = at, Source = source };
+        _items.RemoveAll(c => c.Id == clip.Id);
         _items.Insert(0, clip);
-        if (_items.Count > Limit)
-            _items.RemoveAt(_items.Count - 1);
+        Trim();
         return clip;
     }
 
-    public bool Remove(Guid id)
+    public Clip RememberImage(string path, string key, int width, int height, long bytes,
+        DateTimeOffset at, string? source = null)
     {
-        var index = _items.FindIndex(c => c.Id == id);
-        if (index < 0)
-            return false;
-        _items.RemoveAt(index);
-        return true;
+        var clip = _items.FirstOrDefault(c => c.IsImage && c.ImageKey == key)
+            ?? new Clip(Guid.NewGuid(), "", at, ImagePath: path, ImageKey: key,
+                Width: width, Height: height, Bytes: bytes);
+        clip = clip with { At = at, LastUsed = at, Source = source };
+        _items.RemoveAll(c => c.Id == clip.Id);
+        _items.Insert(0, clip);
+        Trim();
+        return clip;
+    }
+
+    public void Touch(Guid id, DateTimeOffset at)
+    {
+        var index = _items.FindIndex(c => c.Id == id && c.IsImage);
+        if (index >= 0) _items[index] = _items[index] with { LastUsed = at };
+    }
+
+    public bool Remove(Guid id) => _items.RemoveAll(c => c.Id == id) > 0;
+
+    public Guid? Restore(Clip clip)
+    {
+        var existing = _items.FirstOrDefault(c => c.Id == clip.Id ||
+            (clip.IsImage ? c.IsImage && c.ImageKey == clip.ImageKey : !c.IsImage && c.Text == clip.Text));
+        if (existing != null) return existing.Id;
+        _items.Add(clip);
+        Trim();
+        return _items.Any(c => c.Id == clip.Id) ? clip.Id : null;
+    }
+
+    void Trim()
+    {
+        var images = _items.Where(c => c.IsImage).OrderByDescending(c => c.LastUsed ?? c.At)
+            .ThenByDescending(c => c.At).Take(ImageLimit).Select(c => c.Id).ToHashSet();
+        var text = _items.Where(c => !c.IsImage).OrderByDescending(c => c.At)
+            .Take(TextLimit).Select(c => c.Id).ToHashSet();
+        _items.RemoveAll(c => c.IsImage ? !images.Contains(c.Id) : !text.Contains(c.Id));
+        _items.Sort((a, b) => b.At.CompareTo(a.At));
     }
 
     public static IReadOnlyList<Clip> Filter(IReadOnlyList<Clip> items, string? query)
     {
-        if (string.IsNullOrWhiteSpace(query))
-            return items.ToList();
-        return items.Where(c => Matches(c.Text, query)).ToList();
+        if (string.IsNullOrWhiteSpace(query)) return items.ToList();
+        return items.Where(c => !c.IsImage && Matches(c.Text, query)).ToList();
     }
 
     public static bool Matches(string text, string query)

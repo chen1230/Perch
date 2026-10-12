@@ -64,7 +64,8 @@ final class ClipboardWatcher {
         let count = pb.changeCount
         guard count != lastCount else { return }
         lastCount = count
-        guard let items = pb.pasteboardItems, !items.isEmpty,
+        guard count != ClipboardHistory.ownChangeCount,
+              let items = pb.pasteboardItems, !items.isEmpty,
               items.allSatisfy({ Self.ignoredTypes.isDisjoint(with: $0.types) }),
               let type = pb.availableType(from: [.png, .tiff]),
               let data = pb.data(forType: type), data.count <= Self.maxBytes,

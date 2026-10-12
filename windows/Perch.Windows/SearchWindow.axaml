@@ -1,30 +1,40 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="Perch.SearchWindow"
-        Title="Perch"
-        SystemDecorations="None"
-        Background="Transparent"
-        Topmost="True"
-        ShowInTaskbar="False"
-        CanResize="False"
-        WindowStartupLocation="Manual">
+        x:Class="Perch.SearchWindow" Title="Perch" SystemDecorations="None"
+        Background="Transparent" Topmost="True" ShowInTaskbar="False"
+        CanResize="False" WindowStartupLocation="Manual">
   <Grid>
     <Border x:Name="Shell" HorizontalAlignment="Center" VerticalAlignment="Center"
-            Width="460" Height="520" CornerRadius="22" Padding="18"
-            BoxShadow="0 24 60 0 #33000000">
-      <DockPanel>
-        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
-          <TextBox x:Name="Query" Padding="14,10" FontSize="15" />
-          <Button x:Name="Clear" Grid.Column="1" Content="×" Width="36" Margin="8,0,0,0" />
+            Width="704" Height="520" CornerRadius="22" Padding="14"
+            BoxShadow="0 18 44 0 #22000000">
+      <Grid RowDefinitions="36,*,36">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBox x:Name="Query" Padding="14,8" FontSize="14" CornerRadius="12" />
+          <Button x:Name="Clear" Grid.Column="1" Content="×" Width="30" Margin="6,0,0,0" />
         </Grid>
-        <TextBlock x:Name="Footer" DockPanel.Dock="Bottom" Margin="0,12,0,0" FontSize="12" />
-        <ScrollViewer>
-          <StackPanel>
-            <TextBlock x:Name="Empty" HorizontalAlignment="Center" Margin="0,56,0,0" FontSize="14" />
-            <StackPanel x:Name="Rows" Spacing="4" />
-          </StackPanel>
-        </ScrollViewer>
-      </DockPanel>
+        <Grid x:Name="Body" Grid.Row="1" ColumnDefinitions="222,1,*" Margin="0,14,0,0">
+          <ScrollViewer x:Name="ListScroll" Grid.Column="0" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+              <TextBlock x:Name="Empty" TextWrapping="Wrap" HorizontalAlignment="Center"
+                         Margin="8,42,8,0" FontSize="13" />
+              <StackPanel x:Name="Rows" Spacing="2" Margin="0,0,6,0" />
+            </StackPanel>
+          </ScrollViewer>
+          <Border x:Name="Divider" Grid.Column="1" Margin="0,0,0,8" />
+          <ScrollViewer x:Name="DetailScroll" Grid.Column="2" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="Detail" Margin="16,0,4,0" />
+          </ScrollViewer>
+        </Grid>
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,Auto,*,Auto" Margin="0,8,0,0">
+          <Button x:Name="PasteButton" FontSize="12" Padding="4,0" Background="Transparent" BorderThickness="0" />
+          <Button x:Name="DeleteButton" Grid.Column="1" FontSize="12" Padding="8,0" Background="Transparent" BorderThickness="0" />
+          <Button x:Name="CloseButton" Grid.Column="2" FontSize="12" Padding="8,0" Background="Transparent" BorderThickness="0" />
+          <TextBlock x:Name="Feedback" Grid.Column="3" FontSize="11" VerticalAlignment="Center"
+                     TextTrimming="CharacterEllipsis" Margin="8,0,4,0" />
+          <Button x:Name="UndoButton" Grid.Column="4" FontSize="12" Padding="4,0"
+                  Background="Transparent" BorderThickness="0" />
+        </Grid>
+      </Grid>
     </Border>
   </Grid>
 </Window>

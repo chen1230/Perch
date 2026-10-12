@@ -75,27 +75,17 @@
 
 <br>
 
-## 复制的文字
+## 剪贴板历史
 
-复制的文字会留下来。截图仍只挂在绳子上，不进这份记录。没有一块总开着的历史面板。按 <kbd>⌃</kbd>&thinsp;<kbd>⌥</kbd>&thinsp;<kbd>V</kbd>，或在菜单栏选「复制的文字」，搜索窗口才出现。搜索框空着时，列出最近复制的文字。输入之后，匹配到的词用这一行自己的颜色标出。
+Mac 按 <kbd>⌃</kbd>&thinsp;<kbd>⌥</kbd>&thinsp;<kbd>V</kbd>，Windows 按 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>，或选择菜单「剪贴板历史」。左侧按复制时间分组，单击选择，右侧查看完整文字或图片以及来源、尺寸等详情；按 Enter 或双击记录粘贴到之前的应用。点击图片预览可放大，Esc 先返回详情，再按关闭。搜索只匹配文字，清空搜索后图片重新出现。
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../images/zh-Hans/clipboard-dark.png">
-  <img src="../images/zh-Hans/clipboard-light.png" alt="复制文字的搜索窗口。输入「配置」后，这个词用这一行自己的颜色标出，行尾有 ×。">
-</picture>
+默认分别保存 **1000 条文字、100 张图片**。菜单「历史容量」可以分别设置图片 50 / 100 / 200 / 500 张，文字 100 / 500 / 1000 / 5000 条。图片按 **LRU** 淘汰：复制、选中查看或粘贴会刷新使用时间，超过容量时删除最久未使用的图片；文字按最近复制时间保留。容量与图片使用时间会在重启后保留。
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../images/zh-Hans/clipboard-demo-dark.gif">
-  <img src="../images/zh-Hans/clipboard-demo-light.gif" alt="搜索窗口弹出来，列出最近复制的文字。输入之后，其余几行离开，命中的词亮起，指针停在这一行上。">
-</picture>
+选中行末尾 ×、Mac 的 ⌘⌫ 或 Windows 的 Ctrl+Backspace 删除记录；5 秒内可点「撤销删除」或按 ⌘Z / Ctrl+Z 恢复。指针移开不会关闭窗口，Esc 或点击窗口外关闭。
 
-指针移开不会关上。点到玻璃外面、按 Esc、再按一次快捷键，或者选中一条，才会关。选中一条会把这段文字复制回去，并尽量粘到刚才那个 App。
+图片历史使用独立副本，卸下绳子上的图片不会删除历史图片，关闭「挂上复制的图片」也不会停止历史收集。单张图片最多 64 MB、8000 万像素，粘贴使用原图。复制的文件、私密或临时内容不会记下来。旧文字记录会迁移，原始文件保留。全部数据只在本机保存。
 
-样式在菜单栏的「主题」里选，默认是昼。其余是夜市、釉、谱、映。
-
-指针停在一行上，行尾会出现 ×。点一下只删这一条，不确认，也不会粘贴。<kbd>⌘</kbd>&thinsp;<kbd>⌫</kbd> 同样只删当前这一条，按住不会连着往下删。单独按 <kbd>⌫</kbd> 只改搜索框里的字。
-
-大约保留最近 100 条，存在这台 Mac 上 Perch 自己的文件夹里。复制的文件，以及密码管理器标为私密的内容，不会记下来。
+自动粘贴在 Mac 上需要辅助功能权限；未授权时会复制内容并提示关闭面板后手动粘贴。
 
 <br>
 
@@ -137,7 +127,7 @@ open build/Perch.app
 
 ## Windows
 
-Windows 版是给 Windows 11 用的托盘程序。截图挂在屏幕上沿的绳子上，复制过的文字可以搜索，主题有五个。对外发 `windows/dist/Perch-1.1.0-setup.exe` 这一个文件，大约 79 MB。它就是安装包。
+Windows 版是给 Windows 11 用的托盘程序。截图挂在屏幕上沿的绳子上，文字和图片可在双栏历史中查看，容量可配置，主题有五个。对外发 `windows/dist/Perch-1.2.0-setup.exe` 这一个文件，大约 79 MB。它就是安装包。
 
 双击安装。装到当前用户，不需要管理员密码。开始菜单里有一个 Perch。从「设置 → 应用」卸载。复制过的文字和截图留在 `%AppData%\Perch`。
 
@@ -150,7 +140,7 @@ Windows 版是给 Windows 11 用的托盘程序。截图挂在屏幕上沿的绳
 | 单击一张图 | 把这张图放回剪贴板。 |
 | 沿绳子拖动 | 松手后停在那个位置。拖离绳子再松开，会回到原来的位置。 |
 | 图片上的 × | 从绳子上取下。Perch 自己保存的副本会删掉。图片文件夹里的原图不删。 |
-| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>，或「复制的文字」 | 打开搜索。搜索框为空时列出最近的文字。匹配到的词用这一行自己的颜色标出。 |
+| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>，或「剪贴板历史」 | 打开历史。搜索框为空时列出最近的文字和图片。匹配到的词用这一行自己的颜色标出。 |
 | 点到玻璃外面、Esc、再按快捷键，或选中一行 | 关掉搜索。选中一行时，还会把文字复制回去，并尽量粘贴到刚才那个窗口。 |
 | 只是把指针移开 | 搜索窗口不关。 |
 | 行尾 ×，或 <kbd>Ctrl</kbd>+<kbd>Backspace</kbd> | 删掉这一条，不需要确认。按住不会连着删下一条。单独按 Backspace 只改搜索框里的字。 |
@@ -170,7 +160,7 @@ windows/installer/build-setup.sh
 | `windows/Perch.Core` | 复制过的文字、每张图挂在哪里、主题色 |
 | `windows/Perch.Windows` | 托盘程序 |
 | `windows/Perch.Setup` | 安装包 |
-| `windows/dist/Perch-1.1.0-setup.exe` | 发给别人的那一个文件 |
+| `windows/dist/Perch-1.2.0-setup.exe` | 发给别人的那一个文件 |
 
 <details>
 <summary>应用内部</summary>

@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Perch-Setup</AssemblyName>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Product>Perch</Product>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -16,6 +16,6 @@
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="..\dist\Perch-1.1.0-win-x64.zip" LogicalName="payload.zip" />
+    <EmbeddedResource Include="..\dist\Perch-1.2.0-win-x64.zip" LogicalName="payload.zip" />
   </ItemGroup>
 </Project>

@@ -20,7 +20,7 @@ public class ClipBookTests
     }
 
     [Fact]
-    public void Remember_caps_at_one_hundred()
+    public void Remember_caps_at_default_text_capacity()
     {
         var book = new ClipBook();
         for (var i = 0; i < ClipBook.Limit + 5; i++)

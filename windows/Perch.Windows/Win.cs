@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using Avalonia;
 using SkiaSharp;
 
@@ -44,7 +45,7 @@ static class Win
             var files = IsClipboardFormatAvailable(15);
             string? text = files || excluded ? null : ReadText();
             byte[]? png = null;
-            if (!files)
+            if (!files && !excluded && string.IsNullOrWhiteSpace(text))
             {
                 var rawPng = ReadBytes(pngFormat);
                 if (rawPng is { Length: > 8 })
@@ -66,29 +67,43 @@ static class Win
         }
     }
 
-    public static bool SetText(string text)
+    public static bool SetText(string text, IntPtr owner)
     {
         if (!OperatingSystem.IsWindows())
             return false;
         var bytes = System.Text.Encoding.Unicode.GetBytes(text + "\0");
-        return Set(13, bytes);
+        return Set(13, bytes, owner);
     }
 
-    public static bool SetImageFile(string path)
+    public static bool SetImageFile(string path, IntPtr owner)
     {
         if (!OperatingSystem.IsWindows() || !File.Exists(path))
             return false;
         using var bitmap = SKBitmap.Decode(path);
         if (bitmap == null)
             return false;
-        return Set(8, BitmapToDib(bitmap));
+        return Set(8, BitmapToDib(bitmap), owner);
     }
+
+    public static string? SourceName()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        try
+        {
+            GetWindowThreadProcessId(GetForegroundWindow(), out var pid);
+            using var process = Process.GetProcessById((int)pid);
+            return process.MainModule?.FileVersionInfo.ProductName ?? process.ProcessName;
+        }
+        catch { return null; }
+    }
+    public static bool CanPasteInto(IntPtr hwnd) => OperatingSystem.IsWindows() && hwnd != IntPtr.Zero && IsWindow(hwnd);
+    public static void RestoreFocus(IntPtr hwnd) { if (CanPasteInto(hwnd)) Focus(hwnd); }
 
     public static void PasteInto(IntPtr hwnd)
     {
-        if (!OperatingSystem.IsWindows())
-            return;
+        if (!CanPasteInto(hwnd)) return;
         Focus(hwnd);
+        if (GetForegroundWindow() != hwnd) return;
         var inputs = new[]
         {
             Key(VkControl, false),
@@ -111,9 +126,9 @@ static class Win
         AttachThreadInput(thisThread, foregroundThread, false);
     }
 
-    static bool Set(uint format, byte[] bytes)
+    static bool Set(uint format, byte[] bytes, IntPtr owner)
     {
-        if (!OpenClipboard(IntPtr.Zero))
+        if (owner == IntPtr.Zero || !OpenClipboard(owner))
             return false;
         try
         {
@@ -329,6 +344,7 @@ static class Win
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
     [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();

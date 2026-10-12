@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import ImageIO
 import SwiftUI
 
 /// A borderless panel that can take the keyboard. The line's panel cannot.
@@ -10,7 +11,7 @@ private final class SearchPanel: NSPanel {
 
 /// Glass size, plus the clear margin the shadow is drawn in.
 private enum SearchChrome {
-    static let glassWidth: CGFloat = 460
+    static let glassWidth: CGFloat = 704
     static let glassHeight: CGFloat = 520
     static let margin: CGFloat = 40
     static var windowSize: NSSize {
@@ -54,7 +55,7 @@ final class ClipboardSearch: NSObject, NSWindowDelegate {
         acceptsOutsideClose = false
         closing = false
         model.query = ""
-        model.selection = 0
+        model.selectFirst()
         let panel = ensurePanel()
         place(panel)
         panel.alphaValue = 0
@@ -148,9 +149,12 @@ final class ClipboardSearch: NSObject, NSWindowDelegate {
     /// The hosting view is created once. A new session still has to reach it,
     /// so the root view is replaced each time the window opens.
     private func place(_ panel: NSPanel) {
-        let host = NSHostingView(rootView: ClipboardSearchView(model: model, session: session) { [weak self] text in
-            self?.paste(text)
-        })
+        if let screen = LinePanel.screenUnderPointer() {
+            panel.setContentSize(NSSize(width: min(SearchChrome.windowSize.width, screen.visibleFrame.width),
+                                        height: min(SearchChrome.windowSize.height, screen.visibleFrame.height)))
+        }
+        let host = NSHostingView(rootView: ClipboardSearchView(model: model, session: session,
+            onPaste: { [weak self] clip in self?.paste(clip) }, onClose: { [weak self] in self?.close() }))
         host.sizingOptions = []
         host.clipsToBounds = false
         panel.contentView = host
@@ -165,6 +169,7 @@ final class ClipboardSearch: NSObject, NSWindowDelegate {
     private func handle(_ event: NSEvent) -> Bool {
         switch event.keyCode {
         case 53:
+            if model.expanded { model.expanded = false; return true }
             close()
             return true
         case 36, 76:
@@ -175,6 +180,10 @@ final class ClipboardSearch: NSObject, NSWindowDelegate {
             return true
         case 126:
             model.move(-1)
+            return true
+        case UInt16(kVK_ANSI_Z):
+            guard event.modifierFlags.contains(.command) else { return false }
+            model.undo()
             return true
         case UInt16(kVK_Delete):
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -189,8 +198,12 @@ final class ClipboardSearch: NSObject, NSWindowDelegate {
         }
     }
 
-    private func paste(_ text: String) {
-        ClipboardHistory.shared.copyToPasteboard(text)
+    private func paste(_ clip: HistoryClip) {
+        guard ClipboardHistory.shared.copyToPasteboard(clip) else { return }
+        if !AXIsProcessTrusted() || target == nil || target?.isTerminated == true {
+            ClipboardHistory.shared.status = L("Copied. Close, then press Command-V")
+            return
+        }
         let app = target
         // Leave before sending Command-V, so the keystroke is not typed into this field.
         closing = true
@@ -199,6 +212,8 @@ final class ClipboardSearch: NSObject, NSWindowDelegate {
         panel?.alphaValue = 1
         app?.activate(options: [.activateAllWindows])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard let app, !app.isTerminated,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier else { return }
             Self.postPaste()
         }
     }
@@ -218,39 +233,36 @@ final class ClipboardSearch: NSObject, NSWindowDelegate {
 @MainActor
 final class ClipboardSearchModel: ObservableObject {
     @Published var query = ""
-    @Published var selection = 0
-    /// Bumps only when the keyboard moves the highlight, so hovering a row does not scroll the list.
+    @Published var selectedID: UUID?
     @Published var scrollToken = 0
-
-    var matches: [TextClip] { ClipboardHistory.shared.matches(query) }
-
+    @Published var expanded = false
+    var matches: [HistoryClip] { ClipboardHistory.shared.matches(query) }
+    var selection: Int {
+        get { matches.firstIndex { $0.id == selectedID } ?? 0 }
+        set { let found = matches; select(found.indices.contains(newValue) ? found[newValue].id : nil) }
+    }
+    func select(_ id: UUID?) {
+        guard selectedID != id else { return }
+        selectedID = id
+        expanded = false
+        if let id { ClipboardHistory.shared.touch(id) }
+    }
+    func selectFirst() { selectedID = nil; select(matches.first?.id); scrollToken += 1 }
     func move(_ delta: Int) {
-        let count = matches.count
-        guard count > 0 else { return }
-        selection = min(max(0, selection + delta), count - 1)
+        guard !matches.isEmpty else { return }
+        selection = min(max(0, selection + delta), matches.count - 1)
         scrollToken += 1
     }
-
-    func confirm() -> String? {
-        let found = matches
-        guard found.indices.contains(selection) else { return nil }
-        return found[selection].text
-    }
-
-    /// Removes one row and leaves the highlight on the row that slides into its place.
+    func confirm() -> HistoryClip? { matches.first { $0.id == selectedID } }
     func delete(_ id: UUID) {
-        let index = matches.firstIndex(where: { $0.id == id }) ?? selection
-        withAnimation(.easeOut(duration: 0.12)) {
-            ClipboardHistory.shared.remove(id: id)
-        }
-        let count = matches.count
-        selection = count == 0 ? 0 : min(index, count - 1)
-    }
-
-    func deleteSelection() {
+        let index = matches.firstIndex { $0.id == id } ?? selection
+        ClipboardHistory.shared.remove(id: id)
         let found = matches
-        guard found.indices.contains(selection) else { return }
-        delete(found[selection].id)
+        select(found.isEmpty ? nil : found[min(index, found.count - 1)].id)
+    }
+    func deleteSelection() { if let selectedID { delete(selectedID) } }
+    func undo() {
+        if let id = ClipboardHistory.shared.undoDelete() { select(id); scrollToken += 1 }
     }
 }
 
@@ -259,314 +271,245 @@ private struct ClipboardSearchView: View {
     @ObservedObject private var history = ClipboardHistory.shared
     @ObservedObject private var themes = ClipboardThemes.shared
     var session: Int
-    var onPaste: (String) -> Void
-
+    var onPaste: (HistoryClip) -> Void
+    var onClose: () -> Void
     @FocusState private var focused: Bool
-
-    private static let relative: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
-
-    private var theme: ClipboardTheme { themes.current }
-    private var night: Bool { theme == .night }
+    private var night: Bool { themes.current == .night }
+    private var ink: Color { night ? Color(white: 0.94) : Color(red: 0.23, green: 0.20, blue: 0.18) }
+    private var muted: Color { night ? Color(white: 0.68) : Color(red: 0.51, green: 0.48, blue: 0.45) }
+    private var rule: Color { night ? .white.opacity(0.10) : .black.opacity(0.06) }
+    private var searching: Bool { !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
-        let found = history.matches(model.query)
-        VStack(spacing: 0) {
-            search
-            divider
-            results(found)
-            divider
-            footer
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                search
+                HStack(spacing: 0) {
+                    if !model.expanded {
+                        results.frame(width: min(232, max(190, geometry.size.width * 0.31)))
+                        Rectangle().fill(rule).frame(width: 1).padding(.vertical, 8)
+                    }
+                    detail.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+                .padding(.horizontal, 12)
+                footer
+            }
+            .foregroundStyle(ink)
+            .frame(width: max(0, geometry.size.width - SearchChrome.margin * 2),
+                   height: max(0, geometry.size.height - SearchChrome.margin * 2))
+            .modifier(ClipboardGlass(dark: night))
+            .shadow(color: .black.opacity(night ? 0.28 : 0.12), radius: 22, y: 10)
+            .padding(SearchChrome.margin)
         }
-        .frame(width: SearchChrome.glassWidth, height: SearchChrome.glassHeight)
-        .modifier(ClipboardGlass(dark: night))
-        .shadow(color: .black.opacity(night ? 0.28 : 0.16), radius: 22, y: 10)
-        .padding(SearchChrome.margin)
-        .frame(width: SearchChrome.windowSize.width, height: SearchChrome.windowSize.height)
-        .onAppear { focused = true }
+        .onAppear { focused = true; if model.selectedID == nil { model.selectFirst() } }
         .task(id: session) { focused = true }
-        .onChange(of: model.query) { _, _ in
-            model.selection = 0
-            model.scrollToken += 1
+        .onChange(of: model.query) { _, _ in model.selectFirst() }
+        .onChange(of: history.items) { _, _ in
+            if !model.matches.contains(where: { $0.id == model.selectedID }) { model.selectFirst() }
         }
     }
 
     private var search: some View {
         HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundStyle(night ? Color(red: 0.72, green: 0.68, blue: 0.64) : Color(white: 0.42))
-            TextField(L("Search copied text"), text: $model.query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15, weight: .medium, design: .rounded))
-                .foregroundStyle(night ? Color(red: 0.95, green: 0.93, blue: 0.90) : Color(white: 0.16))
-                .focused($focused)
+            Image(systemName: "magnifyingglass").foregroundStyle(muted)
+            TextField(L("Search copied content"), text: $model.query)
+                .textFieldStyle(.plain).font(.system(size: 14)).focused($focused)
             if !model.query.isEmpty {
-                Button {
-                    model.query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
+                Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain).foregroundStyle(muted).accessibilityLabel(L("Clear search"))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(night ? Color.white.opacity(0.08) : Color.white.opacity(0.30),
-                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 14).frame(height: 36)
+        .background(night ? Color.white.opacity(0.08) : Color.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(rule, lineWidth: 0.5))
+        .padding(14)
     }
 
-    private var divider: some View {
-        Rectangle()
-            .fill(night ? Color.white.opacity(0.08) : Color.black.opacity(0.08))
-            .frame(height: 1)
-            .padding(.horizontal, 14)
-    }
-
-    private func results(_ found: [TextClip]) -> some View {
-        ScrollViewReader { proxy in
+    private var results: some View {
+        let found = model.matches
+        return ScrollViewReader { proxy in
             ScrollView {
                 if found.isEmpty {
-                    empty
+                    VStack(spacing: 8) {
+                        Image(systemName: searching ? "magnifyingglass" : "doc.on.clipboard").font(.system(size: 22))
+                        Text(searching ? L("No matching text") : L("No clipboard history yet"))
+                            .font(.system(size: 13)).multilineTextAlignment(.center)
+                    }.foregroundStyle(muted).padding(.top, 48).padding(.horizontal, 8)
                 } else {
-                    LazyVStack(spacing: 2) {
-                        ForEach(found) { clip in
-                            row(clip, index: found.firstIndex(where: { $0.id == clip.id }) ?? 0)
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(found.enumerated()), id: \.element.id) { index, clip in
+                            if !searching && (index == 0 || HistoryBook.group(for: clip.date) != HistoryBook.group(for: found[index - 1].date)) {
+                                Text(groupName(clip.date)).font(.system(size: 14)).foregroundStyle(muted)
+                                    .padding(.top, index == 0 ? 2 : 12).padding(.bottom, 4).padding(.leading, 8)
+                            }
+                            row(clip).id(clip.id)
                         }
-                    }
-                    .padding(8)
+                    }.padding(.trailing, 6)
                 }
             }
             .onChange(of: model.scrollToken) { _, _ in
-                guard found.indices.contains(model.selection) else { return }
-                let id = found[model.selection].id
-                withAnimation(.easeOut(duration: 0.12)) {
-                    proxy.scrollTo(id, anchor: .center)
-                }
+                if let id = model.selectedID { proxy.scrollTo(id, anchor: .center) }
             }
         }
     }
 
-    private var empty: some View {
-        VStack(spacing: 6) {
-            Image(systemName: model.query.isEmpty ? "doc.on.clipboard" : "magnifyingglass")
-                .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(.tertiary)
-            Text(model.query.isEmpty ? L("Nothing copied yet") : L("No matches"))
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(night ? Color.white.opacity(0.55) : Color.black.opacity(0.45))
-        }
-        .frame(maxWidth: .infinity, minHeight: 340)
-    }
-
-    private func row(_ clip: TextClip, index: Int) -> some View {
-        let selected = index == model.selection
-        let accent = theme.accent(for: clip.id)
-        let ink = Color(red: 0.16, green: 0.13, blue: 0.11)
-        let cream = Color(red: 1, green: 0.973, blue: 0.953)
-        return HStack(alignment: .center, spacing: 4) {
-            Button {
-                onPaste(clip.text)
-            } label: {
-                HStack(alignment: .top, spacing: 10) {
-                    mark(accent, selected: selected)
-                    Text(highlighted(clip.text, query: model.query, accent: accent, selected: selected))
-                        // The row used to be identified by its position. Clearing the search
-                        // reused that cell, so the old string and its highlight stayed on screen.
-                        .id(clip.id.uuidString + "\u{1e}" + model.query)
-                        .font(.system(size: 14, weight: selected ? .semibold : .medium, design: .rounded))
-                        .foregroundStyle(rowInk(accent, selected: selected, ink: ink, cream: cream))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(Self.relative.localizedString(for: clip.date, relativeTo: Date()))
-                        .font(.system(size: 11, weight: theme == .reflection && selected ? .bold : .medium, design: .rounded))
-                        .foregroundStyle(timeInk(accent, selected: selected))
-                        .layoutPriority(1)
-                        .padding(.top, 2)
-                }
-                .padding(.leading, 10)
-                .padding(.vertical, 9)
+    private func row(_ clip: HistoryClip) -> some View {
+        let selected = clip.id == model.selectedID
+        let accent = themes.current.accent(for: clip.id)
+        return HStack(spacing: 8) {
+            if clip.isImage {
+                HistoryImage(clip: clip, maxPixels: 72).frame(width: 24, height: 24).clipShape(RoundedRectangle(cornerRadius: 4))
+            } else {
+                Circle().fill(accent).frame(width: 6, height: 6).frame(width: 24)
+            }
+            Text(clip.isImage ? AttributedString("\(L("Image")) (\(clip.width ?? 0) × \(clip.height ?? 0))") : highlighted(clip.text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines), accent: accent))
+                .font(.system(size: 13)).lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            if selected {
+                Button { model.delete(clip.id) } label: { Image(systemName: "xmark").font(.system(size: 9)).frame(width: 16, height: 24) }
+                    .buttonStyle(.plain).foregroundStyle(muted).help(L("Delete"))
+                    .accessibilityLabel(L("Delete"))
             }
-            .buttonStyle(.plain)
-            Button {
-                model.delete(clip.id)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                    .foregroundStyle(timeInk(accent, selected: true))
-                    .frame(width: 16, height: 16)
-                    .background(Color.primary.opacity(0.08), in: Circle())
-            }
-            .buttonStyle(.plain)
-            .opacity(selected ? 1 : 0)
-            .allowsHitTesting(selected)
-            .accessibilityHidden(!selected)
-            .accessibilityLabel(L("Delete"))
-            .help(L("Delete"))
-            .padding(.trailing, 8)
         }
-        .background(rowFill(accent, selected: selected), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .onHover { inside in
-            if inside { model.selection = index }
+        .padding(.horizontal, 8).frame(height: 36)
+        .background(selected ? (night ? accent.opacity(0.22) : Color.white.mixed(with: accent, fraction: 0.18)) : .clear,
+                    in: RoundedRectangle(cornerRadius: 9))
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { model.select(clip.id); onPaste(clip) }
+        .onTapGesture { model.select(clip.id) }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    @ViewBuilder private var detail: some View {
+        if let clip = model.confirm() {
+            VStack(alignment: .leading, spacing: 0) {
+                if model.expanded {
+                    Button { model.expanded = false } label: { Label(L("Back"), systemImage: "chevron.left") }
+                        .buttonStyle(.plain).foregroundStyle(muted).padding(.bottom, 12)
+                    HistoryImage(clip: clip, maxPixels: 2048).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    if clip.isImage {
+                        HistoryImage(clip: clip, maxPixels: 1024).frame(maxWidth: .infinity).frame(height: 214)
+                            .background(night ? Color.white.opacity(0.03) : Color.white.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+                            .contentShape(Rectangle()).onTapGesture { model.expanded = true }
+                            .help(L("Click to enlarge"))
+                    } else {
+                        ScrollView {
+                            Text(highlighted(clip.text, accent: themes.current.accent(for: clip.id)))
+                                .font(.system(size: 15)).lineSpacing(4).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }.frame(maxHeight: 214)
+                    }
+                    VStack(spacing: 0) {
+                        metadata(L("Source"), clip.source ?? L("Unknown source"))
+                        metadata(L("Type"), clip.isImage ? L("Image") : L("Text"))
+                        if clip.isImage {
+                            metadata(L("Dimensions"), "\(clip.width ?? 0) × \(clip.height ?? 0) px")
+                            metadata(L("File size"), ByteCountFormatter.string(fromByteCount: Int64(clip.bytes ?? 0), countStyle: .file))
+                        } else {
+                            metadata(L("Characters"), "\(clip.text.count)")
+                        }
+                        metadata(L("Time"), timeName(clip.date))
+                    }.padding(.top, 14)
+                    Spacer(minLength: 0)
+                }
+            }.padding(.horizontal, 16).padding(.top, 2)
+        } else {
+            Text(searching ? L("No matching text") : L("Copy text or an image to get started"))
+                .font(.system(size: 14)).foregroundStyle(muted).padding(24)
         }
     }
 
-    @ViewBuilder
-    private func mark(_ accent: Color, selected: Bool) -> some View {
-        switch theme {
-        case .night, .day:
-            Circle().fill(accent).frame(width: 6, height: 6).padding(.top, 6)
-        case .lacquer:
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                .fill(selected ? Color.white.opacity(0.9) : accent)
-                .frame(width: 9, height: 9)
-                .padding(.top, 4)
-        case .spectrum:
-            RoundedRectangle(cornerRadius: 1, style: .continuous)
-                .fill(accent)
-                .frame(width: 2)
-                .padding(.vertical, 3)
-        case .reflection:
-            EmptyView()
-        }
-    }
-
-    private func rowFill(_ accent: Color, selected: Bool) -> Color {
-        guard selected else { return .clear }
-        switch theme {
-        case .night:
-            return Color(red: 226 / 255, green: 176 / 255, blue: 106 / 255).opacity(0.22)
-        case .day:
-            return Color.white.mixed(with: accent, fraction: 0.22)
-        case .lacquer:
-            return accent.mixed(with: Color(red: 0.14, green: 0.08, blue: 0.05), fraction: 0.14)
-        case .spectrum:
-            return Color.white.mixed(with: accent, fraction: 0.18)
-        case .reflection:
-            return Color.white.mixed(with: accent, fraction: 0.20)
-        }
-    }
-
-    private func rowInk(_ accent: Color, selected: Bool, ink: Color, cream: Color) -> Color {
-        switch theme {
-        case .night:
-            return selected ? Color(red: 1, green: 0.965, blue: 0.918) : Color(red: 0.953, green: 0.925, blue: 0.894)
-        case .day:
-            return selected ? accent.mixed(with: ink, fraction: 0.42) : Color(red: 0.23, green: 0.20, blue: 0.17)
-        case .lacquer:
-            return selected ? cream : Color(red: 0.16, green: 0.14, blue: 0.12)
-        case .spectrum:
-            return selected ? accent.mixed(with: Color(red: 0.09, green: 0.08, blue: 0.07), fraction: 0.28) : Color(red: 0.14, green: 0.13, blue: 0.125)
-        case .reflection:
-            return Color(red: 0.15, green: 0.14, blue: 0.125)
-        }
-    }
-
-    private func timeInk(_ accent: Color, selected: Bool) -> Color {
-        switch theme {
-        case .night:
-            return selected ? Color(red: 0.94, green: 0.83, blue: 0.64) : Color(red: 0.60, green: 0.57, blue: 0.53)
-        case .day:
-            return selected ? accent.mixed(with: Color(red: 0.42, green: 0.36, blue: 0.31), fraction: 0.58) : Color(red: 0.55, green: 0.51, blue: 0.46)
-        case .lacquer:
-            return selected ? Color.white.opacity(0.76) : Color(red: 0.43, green: 0.40, blue: 0.37)
-        case .spectrum:
-            return selected ? accent.mixed(with: Color(red: 0.36, green: 0.35, blue: 0.33), fraction: 0.52) : Color(red: 0.48, green: 0.45, blue: 0.43)
-        case .reflection:
-            return accent
+    private func metadata(_ key: String, _ value: String) -> some View {
+        VStack(spacing: 0) {
+            Rectangle().fill(rule).frame(height: 0.5)
+            HStack {
+                Text(key).foregroundStyle(muted)
+                Spacer(minLength: 12)
+                Text(value).lineLimit(1).help(value)
+            }.font(.system(size: 13)).padding(.vertical, 7)
         }
     }
 
     private var footer: some View {
         HStack(spacing: 16) {
-            keyHint("↩", L("Paste"))
-            keyHint("⌘⌫", L("Delete"))
-            keyHint("esc", L("Close"))
-        }
-        .padding(.vertical, 10)
+            Button { if let clip = model.confirm() { onPaste(clip) } } label: { Text("↩ " + L("Paste")) }
+                .disabled(model.confirm() == nil)
+            Button { model.deleteSelection() } label: { Text("⌘⌫ " + L("Delete")) }
+                .disabled(model.confirm() == nil)
+            Button(action: onClose) { Text("esc " + L("Close")) }
+            Spacer(minLength: 0)
+            if history.deleted != nil {
+                Button { model.undo() } label: { Text(L("Undo delete")) }
+            } else if let status = history.status {
+                Text(status).lineLimit(1).help(status).onTapGesture { history.status = nil }
+            } else if searching {
+                Text(L("Searches text only"))
+            }
+        }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(muted)
+            .padding(.horizontal, 18).frame(height: 42)
     }
 
-    private func keyHint(_ key: String, _ label: String) -> some View {
-        HStack(spacing: 5) {
-            Text(key)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.primary.opacity(0.06), in: Capsule())
-            Text(label)
-        }
-        .font(.system(size: 11, weight: .medium, design: .rounded))
-        .foregroundStyle(night ? Color.white.opacity(0.45) : Color.black.opacity(0.4))
-    }
-
-    /// The same comparison the list filter uses, so a visible row always has something to mark.
-    private func highlighted(_ text: String, query: String, accent: Color, selected: Bool) -> AttributedString {
-        let flat = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
-        let shown = snippet(flat, words: words)
-        var styled = AttributedString(shown)
-        guard !words.isEmpty else { return styled }
-        let wash = matchWash(accent, selected: selected)
-        for range in matchRanges(in: shown, words: words) {
-            guard let lower = AttributedString.Index(range.lowerBound, within: styled),
-                  let upper = AttributedString.Index(range.upperBound, within: styled) else { continue }
-            styled[lower..<upper].backgroundColor = wash
-        }
-        return styled
-    }
-
-    /// Keeps the first hit on screen when the copied text is longer than the row.
-    private func snippet(_ flat: String, words: [String]) -> String {
-        let limit = 240
-        guard flat.count > limit else { return flat }
-        guard let hit = words.compactMap({ flat.localizedStandardRange(of: $0)?.lowerBound }).min() else {
-            return String(flat.prefix(limit)) + "…"
-        }
-        let lead = 32
-        let hitOffset = flat.distance(from: flat.startIndex, to: hit)
-        let startOffset = max(0, hitOffset - lead)
-        let endOffset = min(flat.count, startOffset + limit)
-        let start = flat.index(flat.startIndex, offsetBy: startOffset)
-        let end = flat.index(flat.startIndex, offsetBy: endOffset)
-        var slice = String(flat[start..<end])
-        if startOffset > 0 { slice = "…" + slice }
-        if endOffset < flat.count { slice += "…" }
-        return slice
-    }
-
-    private func matchRanges(in text: String, words: [String]) -> [Range<String.Index>] {
-        var ranges: [Range<String.Index>] = []
-        for word in words where !word.isEmpty {
-            var cursor = text.startIndex
-            while cursor < text.endIndex, let found = text[cursor...].localizedStandardRange(of: word) {
-                ranges.append(found)
-                if found.upperBound <= cursor { break }
-                cursor = found.upperBound
+    private func highlighted(_ text: String, accent: Color) -> AttributedString {
+        var result = AttributedString(text)
+        for word in model.query.split(whereSeparator: \.isWhitespace) {
+            var rest = text.startIndex..<text.endIndex
+            while let range = text.range(of: String(word), options: [.caseInsensitive, .diacriticInsensitive], range: rest) {
+                if let converted = Range(range, in: result) { result[converted].backgroundColor = accent.opacity(0.22) }
+                guard range.upperBound < text.endIndex else { break }
+                rest = range.upperBound..<text.endIndex
             }
         }
-        return ranges
+        return result
     }
 
-    /// A wash in this clip's own color. Lacquer's selected row is already that color, so the hit turns light.
-    private func matchWash(_ accent: Color, selected: Bool) -> Color {
-        switch theme {
-        case .night:
-            return accent.opacity(0.42)
-        case .lacquer where selected:
-            return Color.white.opacity(0.34)
-        case .day, .spectrum, .reflection, .lacquer:
-            return accent.opacity(selected ? 0.34 : 0.22)
+    private func groupName(_ date: Date) -> String {
+        switch HistoryBook.group(for: date) {
+        case .today: return L("Today")
+        case .yesterday: return L("Yesterday")
+        case .week: return L("Last 7 days")
+        case .month: return L("Last 30 days")
+        case .older(let year, _):
+            if year == Calendar.current.component(.year, from: Date()) { return date.formatted(.dateTime.month(.wide)) }
+            return date.formatted(.dateTime.year().month(.wide))
+        }
+    }
+    private func timeName(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return L("Today") + " " + date.formatted(date: .omitted, time: .shortened) }
+        if Calendar.current.isDateInYesterday(date) { return L("Yesterday") + " " + date.formatted(date: .omitted, time: .shortened) }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+/// Decodes a bounded thumbnail off the main thread; the original stays untouched for pasting.
+private struct HistoryImage: View {
+    let clip: HistoryClip
+    let maxPixels: Int
+    @State private var image: NSImage?
+    @State private var failed = false
+    var body: some View {
+        Group {
+            if let image { Image(nsImage: image).resizable().scaledToFit() }
+            else if failed { Image(systemName: "photo.badge.exclamationmark").foregroundStyle(.secondary).help(L("This image cannot be read")) }
+            else { ProgressView().controlSize(.small) }
+        }
+        .task(id: clip.imageFilename) {
+            let url = ClipboardHistory.shared.imageURL(for: clip)
+            image = nil
+            failed = false
+            let result = await Task.detached(priority: .userInitiated) { () -> NSImage? in
+                guard let url, let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+                      let thumbnail = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+                        kCGImageSourceCreateThumbnailWithTransform: true
+                      ] as CFDictionary) else { return nil }
+                return NSImage(cgImage: thumbnail, size: .zero)
+            }.value
+            guard !Task.isCancelled else { return }
+            image = result
+            failed = result == nil
         }
     }
 }

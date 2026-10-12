@@ -7,6 +7,7 @@ let package = Package(
     targets: [
         // Resources holds the translations. scripts/build-app.sh copies them
         // into the app, so SwiftPM leaves them alone.
-        .executableTarget(name: "Perch", path: "Sources/Perch", exclude: ["Resources"])
+        .executableTarget(name: "Perch", path: "Sources/Perch", exclude: ["Resources"]),
+        .testTarget(name: "PerchTests", dependencies: ["Perch"])
     ]
 )

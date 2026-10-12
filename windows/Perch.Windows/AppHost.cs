@@ -22,7 +22,6 @@ sealed class AppHost
     bool _pinned;
     bool _tDown;
     bool _vDown;
-    bool _ignoreOwn;
     DateTime _lastLineKey;
     DateTime _lastSearchKey;
     DateTime _holdUntil;
@@ -40,10 +39,10 @@ sealed class AppHost
         _line.Rope.CopyRequested += CopyImage;
         _line.Rope.DiscardRequested += Discard;
         _line.Rope.Changed += () => _shelf.SaveLine();
-        _search.Attach(_shelf.Clips);
+        _search.Attach(_shelf);
         _search.SetTheme(_shelf.Theme);
         _search.PasteRequested += Paste;
-        _search.ClipsChanged += () => _shelf.SaveClips();
+        _search.ClipsChanged += () => { if (!_shelf.SaveClips()) _search.Report(_shelf.Error); };
         var icon = LoadIcon();
         if (icon != null)
         {
@@ -76,6 +75,10 @@ sealed class AppHost
         var copied = new NativeMenuItem(L.CopiedText + "    " + L.SearchShortcut);
         copied.Click += (_, _) => ToggleSearch();
         menu.Add(copied);
+        var capacity = new NativeMenuItem(L.S("历史容量", "History capacity")) { Menu = new NativeMenu() };
+        AddCapacityMenu(capacity.Menu, true, new[] { 50, 100, 200, 500 });
+        AddCapacityMenu(capacity.Menu, false, new[] { 100, 500, 1000, 5000 });
+        menu.Add(capacity);
 
         _hangItem = new NativeMenuItem(L.HangImages)
         {
@@ -117,6 +120,26 @@ sealed class AppHost
         };
         tray.Clicked += (_, _) => ToggleLine();
         TrayIcon.SetIcons(Application.Current!, new TrayIcons { tray });
+    }
+
+    void AddCapacityMenu(NativeMenu menu, bool images, int[] values)
+    {
+        var category = new NativeMenuItem(images ? L.S("图片", "Images") : L.S("文字记录", "Text records")) { Menu = new NativeMenu() };
+        var choices = new List<(NativeMenuItem Item, int Value)>();
+        foreach (var value in values)
+        {
+            var option = new NativeMenuItem(value.ToString()) { ToggleType = NativeMenuItemToggleType.Radio,
+                IsChecked = value == (images ? _shelf.Clips.ImageLimit : _shelf.Clips.TextLimit) };
+            choices.Add((option, value));
+            option.Click += (_, _) =>
+            {
+                _shelf.Clips.SetLimits(images ? _shelf.Clips.TextLimit : value, images ? value : _shelf.Clips.ImageLimit);
+                _shelf.SaveSettings(); _shelf.SaveClips(); _search.Reload();
+                foreach (var choice in choices) choice.Item.IsChecked = choice.Value == value;
+            };
+            category.Menu.Add(option);
+        }
+        menu.Add(category);
     }
 
     void SelectTheme(ThemeId theme)
@@ -209,25 +232,24 @@ sealed class AppHost
         var sequence = Win.Sequence();
         if (sequence == 0 || sequence == _sequence)
             return;
+        if (!Win.TryRead(out var read)) return;
         _sequence = sequence;
-        if (_ignoreOwn)
-        {
-            _ignoreOwn = false;
-            return;
-        }
-
-        if (!Win.TryRead(out var read) || read.HasFiles || read.Excluded)
-            return;
+        if (read.HasFiles || read.Excluded) return;
         if (!string.IsNullOrWhiteSpace(read.Text))
         {
-            _shelf.Clips.Remember(read.Text, DateTimeOffset.Now);
+            _shelf.Clips.Remember(read.Text, DateTimeOffset.Now, Win.SourceName());
             _shelf.SaveClips();
             _search.Reload();
             return;
         }
 
-        if (_shelf.ImageHang && read.Png is { Length: > 32 })
-            HangBytes(read.Png);
+        if (read.Png is { Length: > 32 })
+        {
+            _shelf.RememberImage(read.Png, Win.SourceName());
+            _search.Reload();
+            if (_shelf.Error != null) _search.Report(_shelf.Error);
+            if (_shelf.ImageHang) HangBytes(read.Png);
+        }
     }
 
     async Task PollMacClipboard()
@@ -323,8 +345,8 @@ sealed class AppHost
 
     void CopyImage(string path)
     {
-        if (Win.SetImageFile(path))
-            _ignoreOwn = true;
+        if (Win.SetImageFile(path, _line.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero))
+            _sequence = Win.Sequence();
     }
 
     void Discard(string path)
@@ -348,24 +370,31 @@ sealed class AppHost
         _line.Rope.Redraw();
     }
 
-    void Paste(string text, IntPtr previous)
+    void Paste(Clip clip, IntPtr previous)
     {
         if (OperatingSystem.IsWindows())
         {
-            if (Win.SetText(text))
-                _ignoreOwn = true;
-            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(160) };
-            timer.Tick += (_, _) =>
+            bool copied;
+            try { copied = clip.IsImage ? Win.SetImageFile(clip.ImagePath!, _search.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero) : Win.SetText(clip.Text, _search.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero); }
+            catch { copied = false; }
+            if (!copied) { _search.Report(clip.IsImage ? L.UnreadableImage : L.S("复制失败，请重试", "Could not copy; try again")); return; }
+            _sequence = Win.Sequence();
+            _shelf.Clips.Touch(clip.Id, DateTimeOffset.Now); _shelf.SaveClips();
+            if (!Win.CanPasteInto(previous))
             {
-                timer.Stop();
-                Win.PasteInto(previous);
-            };
+                _search.Report(L.S("已复制，关闭后按 Ctrl+V 粘贴", "Copied. Close, then press Ctrl+V"));
+                return;
+            }
+            _search.PasteSucceeded();
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(160) };
+            timer.Tick += (_, _) => { timer.Stop(); Win.PasteInto(previous); };
             timer.Start();
             return;
         }
-
-        _macText = text;
-        _ = _line.Clipboard?.SetTextAsync(text);
+        if (clip.IsImage) { _search.Report(L.S("图片粘贴请在 Windows 验证", "Test image pasting on Windows")); return; }
+        _macText = clip.Text;
+        _ = _line.Clipboard?.SetTextAsync(clip.Text);
+        _search.Report(L.S("已复制", "Copied"));
     }
 
     void HangBytes(byte[] png)
