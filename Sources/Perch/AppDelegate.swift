@@ -501,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if now.timeIntervalSince(since) >= Self.revealDelay {
                     hotZoneSince = nil
                     if panel.screen != screen {
-                        panel.placeOnScreen()
+                        panel.placeOnScreen(screen)
                         updateCapacity()
                     }
                     refresh()

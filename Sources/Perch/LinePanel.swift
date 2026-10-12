@@ -44,7 +44,10 @@ final class LinePanel: NSPanel {
     }
 
     func placeOnScreen(_ screen: NSScreen? = nil) {
-        guard let screen = screen ?? self.screen ?? LinePanel.screenUnderPointer() else { return }
+        // An implicit placement follows the pointer. Preferring the window's
+        // old screen leaves it behind when a hover reveals it on another display.
+        // Callers resizing an existing panel pass its screen explicitly.
+        guard let screen = screen ?? LinePanel.screenUnderPointer() ?? self.screen else { return }
         let visible = screen.visibleFrame
         let top = visible.maxY
         let bottom = expandedDown ? screen.frame.minY : top - Layout.panelHeight
